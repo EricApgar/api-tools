@@ -60,14 +60,33 @@ class Network():
         return
     
 
+    # def manage_plot_queue(self):
+
+    #     while self.flag_queue_status.is_set():
+    #         if self.queue_update_plot.qsize() > 0:
+    #             network = self.queue_update_plot.get(timeout=0.1)
+    #             self.callback_plot_network(network)
+
+    #     return
+    
     def manage_plot_queue(self):
-
         while self.flag_queue_status.is_set():
-            if self.queue_update_plot.qsize() > 0:
+            try:
                 network = self.queue_update_plot.get(timeout=0.1)
-                self.callback_plot_network(network)
 
-        return
+                def do_plot():
+                    if self.callback_plot_network:
+                        self.callback_plot_network(network)
+                        plt.draw()  # make sure to trigger re-render
+
+                # Schedule the plot call on the main GUI thread
+                timer = self.callback_plot_network.__self__.ax.figure.canvas.new_timer(interval=0)
+                timer.add_callback(do_plot)
+                timer.start()
+
+            except queue.Empty:
+                continue
+
     
 
     def add_plot_to_queue(self, node: GenericNode=None):
