@@ -1,43 +1,120 @@
-from typing import Callable
+import os
+import sys
+from typing import Callable, List
 import threading
 import queue
+import socket
 
 import networkx as nx
 import matplotlib.pyplot as plt
 
-from node import GenericNode
+from node import Node, GenericNode
 
 
 class Network():
 
     def __init__(self):
         
-        self.graph = nx.Graph()
-        self.nodes = {}
-        self.node_positions = None
+        self.graph: nx.Graph = nx.Graph()
+        self.nodes: dict = {}
+        self.node_positions: dict = None
 
-        self.callback_plot_network = None
-        self.flag_queue_status = threading.Event()
-        self.queue_update_plot = queue.Queue()
-        self.thread_manage_plot_queue = threading.Thread(target=self.manage_plot_queue)
+        self.callback: Callable = None
+        
+        self.queue = queue.Queue()
+        self.thread_queue = threading.Thread(target=self.manage_queue)
+        self.flag_thread_queue = threading.Event()
 
+    def add_node(
+        self,
+        node: Node=None,
+        name: str=None,
+        connections: List[str]=None,
+        node_type: str='generic'):
 
-    def add_node(self, node: GenericNode):
+        if node is not None:
+            name = node.name
+            node_type = None
+        elif name is None:
+            raise ValueError('Input arg "name" must be provided!')
+        
+        if self.graph.has_node(n=name):
+            raise ValueError(f'Node {name} already exists!')
+        
+        self.graph.add_node(node_for_adding=node)
 
-        self.graph.add_node(node.name)
+        if connections is not None:
+            for connection in connections:
+                self.add_connection(node_1=name, node_2=connection)
+
+        if node_type == 'generic':
+            node = GenericNode(name=name)
+        elif node_type is None:
+            pass
+        else:
+            raise ValueError('Input arg "node_type" is unsupported!')
+        
         self.nodes[node.name] = node
+        self.node_positions = nx.spring_layout(self.graph)
+
+        return
+
+
+    def delete_node(self, name: str):
+
+        self.graph.remove_node(n=name)
+        self.nodes.pop(name)
+
         self.node_positions = nx.spring_layout(self.graph)
 
         return
     
 
-    def start(self):
+    def add_connection(self, node_1: str, node_2: str):
+
+        if not self.graph.has_node(n=node_1) or not self.graph.has_node(n=node_2):
+            raise ValueError('Nodes must exist to add connections!')
+        
+        self.graph.add_edge(u_of_edge=node_1, v_of_edge=node_2)
+
+        self.node_positions = nx.spring_layout(self.graph)
+
+        return
+    
+
+    def delete_connection(self, node_1: str, node_2: str):
+
+        self.graph.remove_edge(u=node_1, v=node_2)
+
+        self.node_positions = nx.spring_layout(self.graph)
+
+        return
+
+
+    def start(self, set_host: bool=True):
+
+        DEFAULT_ADDRESS = '127.0.0.1'
+        DEFAULT_PORT = 8000
+        PORT_TRY_LIMIT = 10
+
+        port_offset = -1
+
+        self.flag_thread_queue.set()
+        self.thread_queue.start()
 
         for node in self.nodes:
-            self.nodes[node].start()
+            if set_host:
+                for i in range(PORT_TRY_LIMIT):
+                    port_offset += 1
+                    if self.is_endpoint_free(address=DEFAULT_ADDRESS, port=DEFAULT_PORT+port_offset):
+                        break
 
-        self.flag_queue_status.set()
-        self.thread_manage_plot_queue.start()
+                    if i == PORT_TRY_LIMIT-1:
+                        raise ValueError('Could not find available port!')
+                    
+                self.nodes[node].set_host(address=DEFAULT_ADDRESS, port=DEFAULT_PORT+port_offset)
+
+            self.nodes[node].start()
 
         return
     
@@ -47,15 +124,15 @@ class Network():
         for node in self.nodes:
             self.nodes[node].stop()
 
-            self.flag_queue_status.clear()
-            self.thread_manage_plot_queue.join()
+        self.flag_thread_queue.clear()
+        self.thread_queue.join()
 
         return
     
 
     def set_callback_plot_network(self, callback: Callable):
 
-        self.callback_plot_network = callback
+        self.callback = callback
 
         return
     
@@ -69,76 +146,44 @@ class Network():
 
     #     return
     
-    def manage_plot_queue(self):
-        while self.flag_queue_status.is_set():
+    def manage_queue(self):
+        
+        while self.flag_thread_queue.is_set():
+            if self.callback is not None:
+                if self.queue.qsize() > 0:
+                    network = self.queue.get(timeout=0.1)
+                    self.callback(network)
+
+        return
+
+
+    def add_to_queue(self, node: GenericNode=None):
+
+        self.queue.put(self)
+
+        return
+    
+
+    @staticmethod
+    def is_endpoint_free(address: str, port: int) -> bool:
+
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             try:
-                network = self.queue_update_plot.get(timeout=0.1)
-
-                def do_plot():
-                    if self.callback_plot_network:
-                        self.callback_plot_network(network)
-                        plt.draw()  # make sure to trigger re-render
-
-                # Schedule the plot call on the main GUI thread
-                timer = self.callback_plot_network.__self__.ax.figure.canvas.new_timer(interval=0)
-                timer.add_callback(do_plot)
-                timer.start()
-
-            except queue.Empty:
-                continue
-
-    
-
-    def add_plot_to_queue(self, node: GenericNode=None):
-
-        self.queue_update_plot.put(self)
-
+                s.bind((address, port))
+                return True
+            except socket.error:
+                return False
+            
         return
-    
 
-class NetworkVizualizer():
-
-    def __init__(self, ax: plt.Axes):
-        
-        self.ax = ax
-
-        plt.ion()
-
-
-    def plot_node(self, network: Network):
-
-        self.ax.clear()
-
-        nx.draw(
-            network.graph,
-            ax=self.ax,
-            pos=network.node_positions,
-            node_color='blue',
-            with_labels=True,
-            node_size=3000)
-        
-        plt.pause(0.05)
-
-        return
-    
 
 if __name__ == '__main__':
 
     import time
 
-    plt.ion()
-    figure, ax = plt.subplots(figsize=(8, 6))
-    graph = nx.Graph()
-    graph.add_node('Test')
-    nx.draw(graph, ax=ax, node_color='red', with_labels=True, node_size=2000)
-    plt.show()
-    plt.pause(1)
-
-    v = NetworkVizualizer(ax=ax)
     n = Network()
 
-    n.set_callback_plot_network(v.plot_node)
-    node = GenericNode(name='Node 0', callback_is_active=n.add_plot_to_queue)
+    node = GenericNode(name='Node 0', callback_is_active=n.add_to_queue)
     node.set_comm_settings(latency_s=.5)
     n.add_node(node=node)
 
