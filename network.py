@@ -36,23 +36,24 @@ class Network():
             name = node.name
             node_type = None
         elif name is None:
-            raise ValueError('Input arg "name" must be provided!')
+            name = f'Node {len(self.nodes)}'
+            # raise ValueError('Input arg "name" must be provided!')
         
         if self.graph.has_node(n=name):
             raise ValueError(f'Node {name} already exists!')
         
-        self.graph.add_node(node_for_adding=node)
-
-        if connections is not None:
-            for connection in connections:
-                self.add_connection(node_1=name, node_2=connection)
-
         if node_type == 'generic':
             node = GenericNode(name=name)
         elif node_type is None:
             pass
         else:
             raise ValueError('Input arg "node_type" is unsupported!')
+
+        self.graph.add_node(node_for_adding=node)
+
+        if connections is not None:
+            for connection in connections:
+                self.add_connection(node_1=name, node_2=connection)
         
         self.nodes[node.name] = node
         self.node_positions = nx.spring_layout(self.graph)
@@ -135,16 +136,7 @@ class Network():
         self.callback = callback
 
         return
-    
 
-    # def manage_plot_queue(self):
-
-    #     while self.flag_queue_status.is_set():
-    #         if self.queue_update_plot.qsize() > 0:
-    #             network = self.queue_update_plot.get(timeout=0.1)
-    #             self.callback_plot_network(network)
-
-    #     return
     
     def manage_queue(self):
         
